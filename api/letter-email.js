@@ -1,7 +1,7 @@
 // letter-email.js - API endpoint for sending letter share links via email
 const express = require("express");
 const router = express.Router();
-const { createGmailTransporter } = require("../configs/mailer");
+const { createMailerTransporter } = require("../configs/mailer");
 const { db } = require("../configs/firebase");
 require('dotenv').config();
 
@@ -37,8 +37,8 @@ router.post("/send", async (req, res) => {
       }
     }
 
-    // Create email transporter with improved connection settings for production
-    const transporter = createGmailTransporter();
+    // Create email transporter (Gmail or Resend) with improved connection settings for production
+    const transporter = createMailerTransporter();
 
     // Default values
     const receiverName = recipientName || "there";

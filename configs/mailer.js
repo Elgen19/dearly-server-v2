@@ -1,8 +1,32 @@
 const nodemailer = require("nodemailer");
 
-// Create Gmail transporter configuration with improved connection settings for production
-function createGmailTransporter() {
-  // Try port 587 first, fallback to 465 if specified in env
+// Create transporter configuration with support for Gmail or Resend
+function createMailerTransporter() {
+  const emailService = (process.env.EMAIL_SERVICE || 'gmail').toLowerCase();
+
+  // Resend SMTP configuration
+  if (emailService === 'resend') {
+    return nodemailer.createTransport({
+      host: "smtp.resend.com",
+      port: process.env.EMAIL_SMTP_PORT ? parseInt(process.env.EMAIL_SMTP_PORT) : 465,
+      secure: true, // Resend recommends 465 SSL
+      auth: {
+        user: "resend",
+        pass: process.env.RESEND_API_KEY,
+      },
+      connectionTimeout: 20000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
+      pool: false,
+      tls: {
+        rejectUnauthorized: false,
+      },
+      debug: process.env.NODE_ENV === 'development',
+      logger: process.env.NODE_ENV === 'development',
+    });
+  }
+
+  // Gmail default configuration
   const useSecure = process.env.EMAIL_USE_SECURE === 'true' || false;
   const smtpPort = process.env.EMAIL_SMTP_PORT ? parseInt(process.env.EMAIL_SMTP_PORT) : (useSecure ? 465 : 587);
   
@@ -14,28 +38,22 @@ function createGmailTransporter() {
       user: process.env.EMAIL_USER,
       pass: process.env.EMAIL_PASS,
     },
-    // Connection timeout settings (increased for Render/production environments)
-    connectionTimeout: 20000, // 20 seconds
-    greetingTimeout: 10000, // 10 seconds
-    socketTimeout: 20000, // 20 seconds
-    // Disable pooling for serverless/production environments
+    connectionTimeout: 20000,
+    greetingTimeout: 10000,
+    socketTimeout: 20000,
     pool: false,
-    // Retry settings
     retry: {
       max: 3,
       minTimeout: 3000,
       maxTimeout: 8000,
     },
-    // TLS options
     tls: {
-      rejectUnauthorized: false, // Required for some production environments
+      rejectUnauthorized: false,
     },
-    // Debug (only in development)
     debug: process.env.NODE_ENV === 'development',
     logger: process.env.NODE_ENV === 'development',
   };
   
-  // Only add service if not using explicit port configuration
   if (!process.env.EMAIL_SMTP_PORT) {
     config.service = "gmail";
   }
@@ -44,10 +62,10 @@ function createGmailTransporter() {
 }
 
 // Default transporter instance
-const transporter = createGmailTransporter();
+const transporter = createMailerTransporter();
 
 // Export both the instance and the factory function
-module.exports.createGmailTransporter = createGmailTransporter;
+module.exports.createMailerTransporter = createMailerTransporter;
 
 /**
  * sendEmail - sends an email to the recipient with optional message
