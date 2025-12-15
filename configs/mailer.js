@@ -61,17 +61,56 @@ function createMailerTransporter() {
   return nodemailer.createTransport(config);
 }
 
-// Default transporter instance
+// Default transporter instance (for SMTP providers)
 const transporter = createMailerTransporter();
 
-// Export both the instance and the factory function
-module.exports.createMailerTransporter = createMailerTransporter;
+/**
+ * sendMail - unified mail sending helper (supports Resend API or SMTP)
+ * @param {object} mailOptions - { from, to, subject, html, text }
+ */
+async function sendMail(mailOptions) {
+  const emailService = (process.env.EMAIL_SERVICE || 'gmail').toLowerCase();
+
+  if (emailService === 'resend') {
+    // Send via Resend HTTP API
+    const apiKey = process.env.RESEND_API_KEY;
+    if (!apiKey) {
+      throw new Error('RESEND_API_KEY is required when EMAIL_SERVICE=resend');
+    }
+
+    const payload = {
+      from: mailOptions.from,
+      to: Array.isArray(mailOptions.to) ? mailOptions.to : [mailOptions.to],
+      subject: mailOptions.subject,
+      html: mailOptions.html,
+      text: mailOptions.text,
+    };
+
+    const response = await fetch('https://api.resend.com/emails', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${apiKey}`,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Resend API error: ${response.status} ${response.statusText} - ${errBody}`);
+    }
+
+    return response.json();
+  }
+
+  // Fallback to SMTP transporter (Gmail or custom SMTP)
+  return transporter.sendMail(mailOptions);
+}
 
 /**
- * sendEmail - sends an email to the recipient with optional message
- * @param {string} to - recipient email
- * @param {string} message - message content
- * @returns {Promise} - resolves when email sent
+ * sendEmail - simple helper for generic messaging
+ * @param {string} to
+ * @param {string} message
  */
 const sendEmail = async (to, message = "") => {
   const defaultMessage = "There's something special waiting for you 💖";
@@ -99,12 +138,7 @@ const sendEmail = async (to, message = "") => {
     `,
   };
 
-  // Security: Never log email credentials, even in development
-  if (process.env.NODE_ENV === 'development') {
-    console.log("📧 Sending email to:", to);
-  }
-
-  return transporter.sendMail(mailOptions);
+  return sendMail(mailOptions);
 };
 
-module.exports = { sendEmail, createMailerTransporter };
+module.exports = { sendEmail, createMailerTransporter, sendMail };

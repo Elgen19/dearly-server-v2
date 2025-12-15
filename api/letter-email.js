@@ -1,7 +1,7 @@
 // letter-email.js - API endpoint for sending letter share links via email
 const express = require("express");
 const router = express.Router();
-const { createMailerTransporter } = require("../configs/mailer");
+const { createMailerTransporter, sendMail } = require("../configs/mailer");
 const { db } = require("../configs/firebase");
 require('dotenv').config();
 
@@ -188,11 +188,8 @@ router.post("/send", async (req, res) => {
       
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
-          // Create a new transporter for each attempt to ensure fresh connection
-          const attemptTransporter = createMailerTransporter();
-          
-          // Add timeout wrapper
-          const sendPromise = attemptTransporter.sendMail(mailOptions);
+          // Send via unified helper (Resend API or SMTP)
+          const sendPromise = sendMail(mailOptions);
           const timeoutPromise = new Promise((_, reject) => {
             setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000);
           });
@@ -200,9 +197,6 @@ router.post("/send", async (req, res) => {
           await Promise.race([sendPromise, timeoutPromise]);
           
           console.log(`✅ Letter email sent successfully to: ${recipientEmail}`);
-          
-          // Close the transporter connection
-          attemptTransporter.close();
 
           return res.status(200).json({
             success: true,

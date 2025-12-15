@@ -1,17 +1,8 @@
 // Vercel Cron Job endpoint for email scheduler
 // This runs every minute to check for scheduled emails
-const nodemailer = require('nodemailer');
+const { sendMail } = require('../../configs/mailer');
 const { db } = require('../../configs/firebase');
 require('dotenv').config();
-
-// Create email transporter
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
 
 /**
  * Send a scheduled email
@@ -31,8 +22,8 @@ async function sendScheduledEmail(emailData, emailId) {
       await emailRef.update({ status: 'sending', sendingStartedAt: new Date().toISOString() });
     }
 
-    // Send the email
-    await transporter.sendMail(emailData.mailOptions);
+    // Send the email (Resend API or SMTP)
+    await sendMail(emailData.mailOptions);
 
     // Delete the email from scheduledEmails node after successful send
     if (db) {

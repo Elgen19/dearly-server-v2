@@ -1,17 +1,8 @@
 // emailScheduler.js - Cron job to check and send scheduled emails
 const cron = require('node-cron');
-const nodemailer = require('nodemailer');
+const { sendMail } = require('../configs/mailer');
 const { db } = require('../configs/firebase');
 require('dotenv').config();
-
-// Create email transporter (reusable)
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
 
 /**
  * Send a scheduled email
@@ -36,8 +27,8 @@ async function sendScheduledEmail(emailData, emailId) {
       await emailRef.update({ status: 'sending', sendingStartedAt: new Date().toISOString() });
     }
 
-    // Send the email using stored mailOptions
-    await transporter.sendMail(emailData.mailOptions);
+    // Send the email using stored mailOptions (Resend API or SMTP)
+    await sendMail(emailData.mailOptions);
 
     console.log(`✅ Scheduled email sent successfully to: ${emailData.recipientEmail} (ID: ${emailId})`);
 
