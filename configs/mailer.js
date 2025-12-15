@@ -107,4 +107,4 @@ const sendEmail = async (to, message = "") => {
   return transporter.sendMail(mailOptions);
 };
 
-module.exports = { sendEmail, createGmailTransporter };
+module.exports = { sendEmail, createMailerTransporter };

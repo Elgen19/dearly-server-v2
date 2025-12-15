@@ -189,7 +189,7 @@ router.post("/send", async (req, res) => {
       for (let attempt = 0; attempt <= maxRetries; attempt++) {
         try {
           // Create a new transporter for each attempt to ensure fresh connection
-          const attemptTransporter = createGmailTransporter();
+          const attemptTransporter = createMailerTransporter();
           
           // Add timeout wrapper
           const sendPromise = attemptTransporter.sendMail(mailOptions);
