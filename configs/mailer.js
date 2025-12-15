@@ -1,14 +1,53 @@
 const nodemailer = require("nodemailer");
 
+// Create Gmail transporter configuration with improved connection settings for production
+function createGmailTransporter() {
+  // Try port 587 first, fallback to 465 if specified in env
+  const useSecure = process.env.EMAIL_USE_SECURE === 'true' || false;
+  const smtpPort = process.env.EMAIL_SMTP_PORT ? parseInt(process.env.EMAIL_SMTP_PORT) : (useSecure ? 465 : 587);
+  
+  const config = {
+    host: "smtp.gmail.com",
+    port: smtpPort,
+    secure: useSecure, // true for 465, false for other ports
+    auth: {
+      user: process.env.EMAIL_USER,
+      pass: process.env.EMAIL_PASS,
+    },
+    // Connection timeout settings (increased for Render/production environments)
+    connectionTimeout: 20000, // 20 seconds
+    greetingTimeout: 10000, // 10 seconds
+    socketTimeout: 20000, // 20 seconds
+    // Disable pooling for serverless/production environments
+    pool: false,
+    // Retry settings
+    retry: {
+      max: 3,
+      minTimeout: 3000,
+      maxTimeout: 8000,
+    },
+    // TLS options
+    tls: {
+      rejectUnauthorized: false, // Required for some production environments
+    },
+    // Debug (only in development)
+    debug: process.env.NODE_ENV === 'development',
+    logger: process.env.NODE_ENV === 'development',
+  };
+  
+  // Only add service if not using explicit port configuration
+  if (!process.env.EMAIL_SMTP_PORT) {
+    config.service = "gmail";
+  }
+  
+  return nodemailer.createTransport(config);
+}
 
-// Configure Gmail transporter
-const transporter = nodemailer.createTransport({
-  service: "gmail",
-  auth: {
-    user: process.env.EMAIL_USER,
-    pass: process.env.EMAIL_PASS,
-  },
-});
+// Default transporter instance
+const transporter = createGmailTransporter();
+
+// Export both the instance and the factory function
+module.exports.createGmailTransporter = createGmailTransporter;
 
 /**
  * sendEmail - sends an email to the recipient with optional message
@@ -50,4 +89,4 @@ const sendEmail = async (to, message = "") => {
   return transporter.sendMail(mailOptions);
 };
 
-module.exports = { sendEmail };
+module.exports = { sendEmail, createGmailTransporter };

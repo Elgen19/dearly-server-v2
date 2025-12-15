@@ -1,7 +1,7 @@
 // letter-email.js - API endpoint for sending letter share links via email
 const express = require("express");
 const router = express.Router();
-const nodemailer = require("nodemailer");
+const { createGmailTransporter } = require("../configs/mailer");
 const { db } = require("../configs/firebase");
 require('dotenv').config();
 
@@ -37,14 +37,8 @@ router.post("/send", async (req, res) => {
       }
     }
 
-    // Create email transporter
-    const transporter = nodemailer.createTransport({
-      service: "gmail",
-      auth: {
-        user: process.env.EMAIL_USER,
-        pass: process.env.EMAIL_PASS,
-      },
-    });
+    // Create email transporter with improved connection settings for production
+    const transporter = createGmailTransporter();
 
     // Default values
     const receiverName = recipientName || "there";
@@ -186,24 +180,72 @@ router.post("/send", async (req, res) => {
         });
       }
     } else {
-      // Send email immediately
+      // Send email immediately with retry logic
       console.log(`📧 Sending letter email to: ${recipientEmail}`);
       
-      await transporter.sendMail(mailOptions);
+      let lastError;
+      const maxRetries = 2;
+      
+      for (let attempt = 0; attempt <= maxRetries; attempt++) {
+        try {
+          // Create a new transporter for each attempt to ensure fresh connection
+          const attemptTransporter = createGmailTransporter();
+          
+          // Add timeout wrapper
+          const sendPromise = attemptTransporter.sendMail(mailOptions);
+          const timeoutPromise = new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Email send timeout after 25 seconds')), 25000);
+          });
+          
+          await Promise.race([sendPromise, timeoutPromise]);
+          
+          console.log(`✅ Letter email sent successfully to: ${recipientEmail}`);
+          
+          // Close the transporter connection
+          attemptTransporter.close();
 
-      console.log(`✅ Letter email sent successfully to: ${recipientEmail}`);
-
-      res.status(200).json({
-        success: true,
-        message: "Letter email sent successfully",
-      });
+          return res.status(200).json({
+            success: true,
+            message: "Letter email sent successfully",
+          });
+        } catch (error) {
+          lastError = error;
+          console.warn(`⚠️ Email send attempt ${attempt + 1}/${maxRetries + 1} failed:`, error.message);
+          
+          // Don't retry on validation errors
+          if (error.responseCode && error.responseCode >= 400 && error.responseCode < 500) {
+            break;
+          }
+          
+          // Wait before retrying (exponential backoff)
+          if (attempt < maxRetries) {
+            await new Promise(resolve => setTimeout(resolve, 2000 * (attempt + 1)));
+          }
+        }
+      }
+      
+      // All retries failed
+      throw lastError;
     }
   } catch (error) {
     console.error("❌ Error sending letter email:", error);
+    
+    // Provide user-friendly error messages
+    let errorMessage = "Failed to send letter email";
+    let errorDetails = error.message;
+    
+    if (error.code === 'ETIMEDOUT' || error.code === 'ECONNREFUSED' || error.message.includes('timeout')) {
+      errorMessage = "Email service connection timeout. Please check your email configuration and network connectivity.";
+      errorDetails = "The email service could not be reached. This may be due to network issues or firewall restrictions.";
+    } else if (error.code === 'EAUTH') {
+      errorMessage = "Email authentication failed. Please check your email credentials.";
+      errorDetails = "Invalid email username or password. Please verify your EMAIL_USER and EMAIL_PASS environment variables.";
+    }
+    
     res.status(500).json({
       success: false,
-      error: "Failed to send letter email",
-      details: error.message,
+      error: errorMessage,
+      details: process.env.NODE_ENV === 'development' ? errorDetails : undefined,
     });
   }
 });
