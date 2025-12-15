@@ -1,0 +1,81 @@
+# Node modules
+node_modules/
+client/node_modules/
+server/node_modules/
+
+# Build output
+client/build/
+dist/
+build/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+*.env
+
+# Secrets and credentials
+secrets/
+*.key
+*.pem
+*.p12
+*.json
+!package.json
+!package-lock.json
+!tsconfig.json
+!tsconfig.*.json
+serviceAccountKey.json
+firebase-adminsdk-*.json
+*-service-account.json
+
+# Logs
+*.log
+logs/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Uploads and user-generated content
+uploads/
+temp/
+tmp/
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+desktop.ini
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.project
+.classpath
+.settings/
+
+# Vercel
+.vercel
+
+# Testing
+coverage/
+.nyc_output/
+*.test.js.snap
+
+# Misc
+*.pid
+*.seed
+*.pid.lock
+.cache/
+
+# Documentation (exclude from git)
+*.md
+!README.md
