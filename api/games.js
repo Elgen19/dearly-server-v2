@@ -16,7 +16,7 @@ const checkFirebase = (req, res, next) => {
 router.post("/:userId", checkFirebase, async (req, res) => {
   try {
     const { userId } = req.params;
-    const { title, type, questions, pairs, settings, rewards, hasReward } = req.body;
+    const { title, type, questions, pairs, words, settings, rewards, hasReward } = req.body;
 
     if (!userId) {
       return res.status(400).json({ error: "User ID is required" });
@@ -31,6 +31,10 @@ router.post("/:userId", checkFirebase, async (req, res) => {
       return res.status(400).json({ error: "Quiz games require at least one question" });
     }
 
+    if (type === 'word-scramble' && (!words || !Array.isArray(words) || words.length === 0)) {
+      return res.status(400).json({ error: "Word scramble games require at least one word" });
+    }
+
     // Memory match games don't require pairs - they use default game logic
 
     const game = {
@@ -38,6 +42,7 @@ router.post("/:userId", checkFirebase, async (req, res) => {
       type,
       questions: type === 'quiz' ? questions : null,
       pairs: type === 'memory-match' ? pairs : null,
+      words: type === 'word-scramble' ? words : null,
       settings: settings || {},
       rewards: rewards || null,
       hasReward: hasReward || false,
@@ -213,7 +218,7 @@ router.get("/:userId/:gameId", checkFirebase, async (req, res) => {
 router.put("/:userId/:gameId", checkFirebase, async (req, res) => {
   try {
     const { userId, gameId } = req.params;
-    const { title, type, questions, pairs, settings, rewards, hasReward } = req.body;
+    const { title, type, questions, pairs, words, settings, rewards, hasReward } = req.body;
 
     if (!userId || !gameId) {
       return res.status(400).json({ error: "User ID and Game ID are required" });
@@ -245,6 +250,9 @@ router.put("/:userId/:gameId", checkFirebase, async (req, res) => {
     }
     if (pairs !== undefined) {
       updateData.pairs = pairs;
+    }
+    if (words !== undefined) {
+      updateData.words = words;
     }
     if (settings !== undefined) {
       updateData.settings = settings;
@@ -391,6 +399,7 @@ router.post("/:userId/:gameId/complete", checkFirebase, async (req, res) => {
         // Get game type for formatting
         const gameType = existingGame.type === 'quiz' ? 'Quiz Game' : 
                         existingGame.type === 'memory-match' ? 'Memory Match' : 
+                        existingGame.type === 'word-scramble' ? 'Word Scramble' :
                         existingGame.type || 'Game';
 
         // Create notification message
