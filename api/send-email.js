@@ -32,27 +32,3 @@ router.post("/", async (req, res) => {
 });
 
 module.exports = router;
-
-
-
-
-
-//======================================================
-// const express = require("express");
-// const router = express.Router();
-// const { sendEmail } = require("../configs/mailer");
-
-// // POST /send-email
-// router.post("/", async (req, res) => {
-//   const { message } = req.body;
-
-//   try {
-//     await sendEmail("elgenprestosa@gmail.com", message);
-//     res.status(200).json({ message: "Email sent successfully!" });
-//   } catch (error) {
-//     console.error(error);
-//     res.status(500).json({ message: "Error sending email", error });
-//   }
-// });
-
-// module.exports = router;

@@ -57,59 +57,36 @@ async function firebaseOperationWithTimeout(firebaseOperation, operationName, ti
 
 // Get receiver data for a user
 router.get("/:userId", async (req, res) => {
-  const startTime = Date.now();
-  console.log(`📥 GET /api/receiver-data/${req.params.userId} - Request received`);
-  
   try {
     const { userId } = req.params;
-    console.log(`🔍 Checking Firebase database initialization...`);
 
     if (!db) {
-      console.error('❌ Firebase database is not initialized');
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Firebase database is not initialized');
+      }
       return res.status(500).json({
         success: false,
         error: "Firebase database not initialized",
       });
     }
 
-    console.log(`✅ Firebase database is initialized, fetching data for user: ${userId}`);
     const receiverRef = db.ref(`users/${userId}/receiver`);
-    
-    console.log(`⏳ Waiting for Firebase snapshot...`);
-    console.log(`🔍 Firebase ref path: users/${userId}/receiver`);
     
     let snapshot;
     try {
-      // Try without timeout wrapper first to see if it's a timeout issue
-      const firebaseStartTime = Date.now();
-      console.log(`⏱️ Starting Firebase operation at ${new Date().toISOString()}`);
-      
       snapshot = await firebaseOperationWithTimeout(
-        () => {
-          console.log(`📡 Executing Firebase .once("value") operation...`);
-          return receiverRef.once("value");
-        },
+        () => receiverRef.once("value"),
         `Firebase read for user ${userId}`,
-        8000, // Increase timeout to 8 seconds to see if it's just slow
-        0 // No retries for read operations
+        8000,
+        0
       );
-      
-      const firebaseDuration = Date.now() - firebaseStartTime;
-      console.log(`✅ Firebase snapshot received (took ${firebaseDuration}ms)`);
     } catch (operationError) {
-      // If Firebase operation fails or times out, return null data instead of error
-      // This allows the app to continue (user will be treated as new user)
       const errorMessage = operationError.message || 'Unknown error';
-      console.warn(`⚠️ Firebase operation failed, returning null data to allow app to continue:`, errorMessage);
-      if (operationError.code) {
-        console.warn(`⚠️ Firebase error code: ${operationError.code}`);
-      }
-      
-      // Log connectivity issue warning (only once per operation type to avoid spam)
-      if (errorMessage.includes('timed out')) {
-        console.warn(`⚠️ CONNECTIVITY ISSUE: Firebase Realtime Database operations are timing out.`);
-        console.warn(`   This is likely a network/firewall or configuration issue, not a code problem.`);
-        console.warn(`   Check Firebase Console, service account permissions, and network connectivity.`);
+      if (process.env.NODE_ENV === 'development') {
+        console.warn(`⚠️ Firebase operation failed:`, errorMessage);
+        if (errorMessage.includes('timed out')) {
+          console.warn(`⚠️ CONNECTIVITY ISSUE: Firebase operations timing out`);
+        }
       }
       
       return res.json({
@@ -122,7 +99,6 @@ router.get("/:userId", async (req, res) => {
     const receiverData = snapshot.val();
 
     if (!receiverData) {
-      console.log(`ℹ️ No receiver data found for user: ${userId}`);
       return res.json({
         success: true,
         data: null,
@@ -130,17 +106,16 @@ router.get("/:userId", async (req, res) => {
       });
     }
 
-    console.log(`✅ Returning receiver data for user: ${userId} (took ${Date.now() - startTime}ms total)`);
     return res.json({
       success: true,
       data: receiverData,
     });
   } catch (error) {
-    console.error(`❌ Unexpected error fetching receiver data (took ${Date.now() - startTime}ms):`, error);
-    console.error("Error stack:", error.stack);
+    if (process.env.NODE_ENV === 'development') {
+      console.error(`❌ Error fetching receiver data:`, error);
+      console.error("Error stack:", error.stack);
+    }
     
-    // Return null data instead of error to allow app to continue
-    // The frontend will treat this as a new user
     return res.json({
       success: true,
       data: null,
@@ -155,10 +130,7 @@ router.post("/:userId", async (req, res) => {
     const { userId } = req.params;
     const { name, email } = req.body;
 
-    console.log(`📥 POST /api/receiver-data/${userId}`, { name, email });
-
     if (!name || !email) {
-      console.log('❌ Missing required fields');
       return res.status(400).json({
         success: false,
         error: "Name and email are required",
@@ -168,7 +140,6 @@ router.post("/:userId", async (req, res) => {
     // Validate email format
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      console.log('❌ Invalid email format');
       return res.status(400).json({
         success: false,
         error: "Invalid email format",
@@ -176,7 +147,9 @@ router.post("/:userId", async (req, res) => {
     }
 
     if (!db) {
-      console.error('❌ Firebase database not initialized');
+      if (process.env.NODE_ENV === 'development') {
+        console.error('❌ Firebase database not initialized');
+      }
       return res.status(500).json({
         success: false,
         error: "Firebase database not initialized",
@@ -190,21 +163,17 @@ router.post("/:userId", async (req, res) => {
       updatedAt: new Date().toISOString(),
     };
 
-    console.log(`💾 Attempting to save to Firebase: users/${userId}/receiver`);
     const receiverRef = db.ref(`users/${userId}/receiver`);
-    const startTime = Date.now();
     
     try {
-      // Use timeout wrapper for set operation
       await firebaseOperationWithTimeout(
         () => receiverRef.set(receiverData),
         `Firebase write for user ${userId}`,
         8000,
-        0 // No retries for write operations
+        0
       );
-      console.log(`✅ Receiver data saved successfully for user ${userId} (took ${Date.now() - startTime}ms):`, receiverData);
       
-      // Verify the save by reading it back (with timeout)
+      // Verify the save by reading it back
       const snapshot = await firebaseOperationWithTimeout(
         () => receiverRef.once("value"),
         `Firebase read verification for user ${userId}`,
@@ -212,7 +181,6 @@ router.post("/:userId", async (req, res) => {
         0
       );
       const savedData = snapshot.val();
-      console.log(`✅ Verified saved data (took ${Date.now() - startTime}ms total):`, savedData);
       
       return res.json({
         success: true,
@@ -220,8 +188,9 @@ router.post("/:userId", async (req, res) => {
         message: "Receiver data saved successfully",
       });
     } catch (firebaseError) {
-      console.error(`❌ Firebase error saving receiver data (took ${Date.now() - startTime}ms):`, firebaseError);
-      // Return a more user-friendly error instead of throwing
+      if (process.env.NODE_ENV === 'development') {
+        console.error(`❌ Firebase error saving receiver data:`, firebaseError);
+      }
       return res.status(500).json({
         success: false,
         error: firebaseError.message.includes('timed out') 
@@ -230,8 +199,10 @@ router.post("/:userId", async (req, res) => {
       });
     }
   } catch (error) {
-    console.error("❌ Error saving receiver data:", error);
-    console.error("Error stack:", error.stack);
+    if (process.env.NODE_ENV === 'development') {
+      console.error("❌ Error saving receiver data:", error);
+      console.error("Error stack:", error.stack);
+    }
     return res.status(500).json({
       success: false,
       error: error.message,
