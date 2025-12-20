@@ -1,4 +1,6 @@
 const nodemailer = require("nodemailer");
+const { google } = require("googleapis");
+const { sendMailViaVercel } = require("./vercel-email");
 
 // Create transporter configuration with support for Gmail or Resend (SMTP fallback)
 function createMailerTransporter() {
@@ -93,11 +95,155 @@ function createMailerTransporter() {
 const transporter = createMailerTransporter();
 
 /**
- * sendMail - unified mail sending helper (supports Resend/Brevo HTTP API or SMTP)
+ * sendMailViaGmailAPI - Send email using Gmail API (REST, not SMTP)
+ * @param {object} mailOptions - { from, to, subject, html, text }
+ */
+async function sendMailViaGmailAPI(mailOptions) {
+  const clientId = process.env.GMAIL_CLIENT_ID;
+  const clientSecret = process.env.GMAIL_CLIENT_SECRET;
+  const refreshToken = process.env.GMAIL_REFRESH_TOKEN;
+  const userEmail = process.env.EMAIL_USER || process.env.GMAIL_USER;
+
+  if (!clientId || !clientSecret || !refreshToken) {
+    throw new Error('Gmail API requires GMAIL_CLIENT_ID, GMAIL_CLIENT_SECRET, and GMAIL_REFRESH_TOKEN environment variables');
+  }
+
+  if (!userEmail) {
+    throw new Error('Gmail API requires EMAIL_USER or GMAIL_USER environment variable');
+  }
+
+  // Parse "from" address
+  const parseAddress = (address) => {
+    if (!address) return { email: '', name: '' };
+    const match = address.match(/^(.*)<(.+)>$/);
+    if (match) {
+      return {
+        name: match[1].trim().replace(/^"|"$/g, ''),
+        email: match[2].trim(),
+      };
+    }
+    return { email: address.trim(), name: '' };
+  };
+
+  const normalizeToArray = (to) => {
+    if (!to) return [];
+    if (Array.isArray(to)) return to;
+    return [to];
+  };
+
+  // Set up OAuth2 client
+  const oauth2Client = new google.auth.OAuth2(
+    clientId,
+    clientSecret,
+    'urn:ietf:wg:oauth:2.0:oob' // Redirect URI (not used for refresh token flow)
+  );
+
+  oauth2Client.setCredentials({
+    refresh_token: refreshToken,
+  });
+
+  // Get access token
+  const accessToken = await oauth2Client.getAccessToken();
+
+  // Prepare email message
+  const sender = parseAddress(mailOptions.from);
+  const toList = normalizeToArray(mailOptions.to);
+  const fromEmail = sender.email || userEmail;
+  const fromName = sender.name || process.env.EMAIL_FROM_NAME || 'Dearly 💌';
+
+  // Encode subject for UTF-8 (handles special characters)
+  const encodeSubject = (subject) => {
+    if (!subject) return '';
+    // If subject contains non-ASCII, encode it
+    if (/[^\x00-\x7F]/.test(subject)) {
+      return `=?UTF-8?B?${Buffer.from(subject).toString('base64')}?=`;
+    }
+    return subject;
+  };
+
+  // Build email message in RFC 2822 format
+  const boundary = `----=_Part_${Date.now()}_${Math.random().toString(36).substring(2)}`;
+  let messageParts = [
+    `From: "${fromName}" <${fromEmail}>`,
+    `To: ${toList.join(', ')}`,
+    `Subject: ${encodeSubject(mailOptions.subject || '')}`,
+    `MIME-Version: 1.0`,
+  ];
+
+  // Add content type based on what we have
+  if (mailOptions.html && mailOptions.text) {
+    // Multipart alternative (HTML + plain text)
+    messageParts.push(`Content-Type: multipart/alternative; boundary="${boundary}"`);
+    messageParts.push('');
+    messageParts.push(`--${boundary}`);
+    messageParts.push(`Content-Type: text/plain; charset=utf-8`);
+    messageParts.push(`Content-Transfer-Encoding: quoted-printable`);
+    messageParts.push('');
+    messageParts.push(mailOptions.text);
+    messageParts.push(`--${boundary}`);
+    messageParts.push(`Content-Type: text/html; charset=utf-8`);
+    messageParts.push(`Content-Transfer-Encoding: quoted-printable`);
+    messageParts.push('');
+    messageParts.push(mailOptions.html);
+    messageParts.push(`--${boundary}--`);
+  } else if (mailOptions.html) {
+    // HTML only
+    messageParts.push(`Content-Type: text/html; charset=utf-8`);
+    messageParts.push('');
+    messageParts.push(mailOptions.html);
+  } else {
+    // Plain text only
+    messageParts.push(`Content-Type: text/plain; charset=utf-8`);
+    messageParts.push('');
+    messageParts.push(mailOptions.text || '');
+  }
+
+  const message = messageParts.join('\r\n');
+
+  // Encode message in base64url format
+  const encodedMessage = Buffer.from(message)
+    .toString('base64')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+    .replace(/=+$/, '');
+
+  // Send email via Gmail API
+  const gmail = google.gmail({ version: 'v1', auth: oauth2Client });
+
+  try {
+    const response = await gmail.users.messages.send({
+      userId: 'me',
+      requestBody: {
+        raw: encodedMessage,
+      },
+    });
+
+    return {
+      messageId: response.data.id,
+      success: true,
+    };
+  } catch (error) {
+    console.error('Gmail API error:', error);
+    throw new Error(`Gmail API error: ${error.message}`);
+  }
+}
+
+/**
+ * sendMail - unified mail sending helper (supports Gmail API, Resend/Brevo HTTP API, or SMTP)
  * @param {object} mailOptions - { from, to, subject, html, text }
  */
 async function sendMail(mailOptions) {
   const emailService = (process.env.EMAIL_SERVICE || 'gmail').toLowerCase();
+
+  // Vercel serverless function (Gmail SMTP, works on Vercel)
+  if (emailService === 'vercel' || emailService === 'vercel-gmail') {
+    return sendMailViaVercel(mailOptions);
+  }
+
+  // Gmail API (REST API, not SMTP)
+  if (emailService === 'gmail-api') {
+    return sendMailViaGmailAPI(mailOptions);
+  }
 
   // Helper to normalize "from" and "to"
   const parseAddress = (address) => {
