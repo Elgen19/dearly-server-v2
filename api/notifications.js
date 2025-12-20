@@ -600,6 +600,41 @@ router.post("/:userId/create", checkFirebase, async (req, res) => {
       });
     }
 
+    // For security access notifications, check for duplicates (same letterId)
+    // to prevent multiple notifications for the same security attempt
+    if (type === 'letter_security_access' && letterId) {
+      try {
+        const notificationsRef = db.ref(`users/${userId}/notifications`);
+        const snapshot = await notificationsRef
+          .orderByChild('type')
+          .equalTo('letter_security_access')
+          .once('value');
+        
+        if (snapshot.exists()) {
+          const notifications = snapshot.val();
+          // Check if there's already a notification for this letterId
+          const existingNotification = Object.values(notifications).find(
+            (notif) => notif.letterId === letterId
+          );
+          
+          if (existingNotification) {
+            console.log(`⏭️ Duplicate security notification prevented for letterId: ${letterId}`);
+            return res.status(200).json({
+              success: true,
+              message: "Notification already exists (duplicate prevented)",
+              notificationId: Object.keys(notifications).find(
+                key => notifications[key].letterId === letterId
+              ),
+              duplicate: true,
+            });
+          }
+        }
+      } catch (checkError) {
+        console.error('Error checking for duplicate notification:', checkError);
+        // Continue to create notification if check fails
+      }
+    }
+
     const notificationRef = db.ref(`users/${userId}/notifications`).push();
     const notificationData = {
       type,
