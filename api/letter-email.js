@@ -45,11 +45,23 @@ router.post("/send", async (req, res) => {
     const sender = senderName || "Someone special";
     const title = letterTitle || "A special letter for you";
 
+    // Plain text version for better deliverability
+    const textContent = `Hello ${receiverName},
+
+${sender} has a special letter for you on Dearly.
+
+Open your letter here: ${shareableLink}
+
+Made with ❤️ by ${sender} for ${receiverName}
+
+If you didn't expect this email, you can safely ignore it.`;
+
     // Custom Dearly email template
     const mailOptions = {
       from: `"Dearly 💌" <${process.env.EMAIL_USER}>`,
       to: recipientEmail,
-      subject: `💌 ${sender} has a letter for you`,
+      subject: `${sender} has a letter for you`,
+      text: textContent,
       html: `
         <!DOCTYPE html>
         <html lang="en">
