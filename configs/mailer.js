@@ -1,6 +1,6 @@
 const nodemailer = require("nodemailer");
 
-// Create transporter configuration with support for Gmail or Resend
+// Create transporter configuration with support for Gmail or Resend (SMTP fallback)
 function createMailerTransporter() {
   const emailService = (process.env.EMAIL_SERVICE || 'gmail').toLowerCase();
 
@@ -19,6 +19,34 @@ function createMailerTransporter() {
       socketTimeout: 20000,
       pool: false,
       tls: {
+        rejectUnauthorized: false,
+      },
+      debug: process.env.NODE_ENV === 'development',
+      logger: process.env.NODE_ENV === 'development',
+    });
+  }
+
+  // Outlook/Hotmail SMTP configuration
+  if (emailService === 'outlook' || emailService === 'hotmail') {
+    return nodemailer.createTransport({
+      host: "smtp-mail.outlook.com",
+      port: 587,
+      secure: false, // Outlook uses STARTTLS on port 587
+      auth: {
+        user: process.env.EMAIL_USER,
+        pass: process.env.EMAIL_PASS,
+      },
+      connectionTimeout: 20000,
+      greetingTimeout: 10000,
+      socketTimeout: 20000,
+      pool: false,
+      retry: {
+        max: 3,
+        minTimeout: 3000,
+        maxTimeout: 8000,
+      },
+      tls: {
+        ciphers: 'SSLv3',
         rejectUnauthorized: false,
       },
       debug: process.env.NODE_ENV === 'development',
@@ -65,11 +93,72 @@ function createMailerTransporter() {
 const transporter = createMailerTransporter();
 
 /**
- * sendMail - unified mail sending helper (supports Resend API or SMTP)
+ * sendMail - unified mail sending helper (supports Resend/Brevo HTTP API or SMTP)
  * @param {object} mailOptions - { from, to, subject, html, text }
  */
 async function sendMail(mailOptions) {
   const emailService = (process.env.EMAIL_SERVICE || 'gmail').toLowerCase();
+
+  // Helper to normalize "from" and "to"
+  const parseAddress = (address) => {
+    if (!address) return { email: '', name: '' };
+    // Handle "Name <email@domain>" format
+    const match = address.match(/^(.*)<(.+)>$/);
+    if (match) {
+      return {
+        name: match[1].trim().replace(/^"|"$/g, ''),
+        email: match[2].trim(),
+      };
+    }
+    return { email: address.trim(), name: '' };
+  };
+
+  const normalizeToArray = (to) => {
+    if (!to) return [];
+    if (Array.isArray(to)) return to;
+    return [to];
+  };
+
+  // Brevo HTTP API
+  if (emailService === 'brevo') {
+    const apiKey = process.env.BREVO_API_KEY;
+    if (!apiKey) {
+      throw new Error('BREVO_API_KEY is required when EMAIL_SERVICE=brevo');
+    }
+
+    const sender = parseAddress(mailOptions.from);
+    const toList = normalizeToArray(mailOptions.to).map(parseAddress).filter(a => a.email);
+
+    const payload = {
+      sender: {
+        email: sender.email,
+        name: sender.name || process.env.EMAIL_FROM_NAME || 'Dearly 💌',
+      },
+      to: toList.map(t => ({
+        email: t.email,
+        name: t.name || undefined,
+      })),
+      subject: mailOptions.subject,
+      htmlContent: mailOptions.html,
+      textContent: mailOptions.text,
+    };
+
+    const response = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'api-key': apiKey,
+      },
+      body: JSON.stringify(payload),
+    });
+
+    if (!response.ok) {
+      const errBody = await response.text().catch(() => '');
+      throw new Error(`Brevo API error: ${response.status} ${response.statusText} - ${errBody}`);
+    }
+
+    return response.json();
+  }
 
   if (emailService === 'resend') {
     // Send via Resend HTTP API
@@ -101,7 +190,7 @@ async function sendMail(mailOptions) {
     }
 
     return response.json();
-  }
+  } // end resend
 
   // Fallback to SMTP transporter (Gmail or custom SMTP)
   return transporter.sendMail(mailOptions);
