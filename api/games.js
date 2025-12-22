@@ -496,14 +496,8 @@ router.put("/:userId/:gameId/complete", checkFirebase, async (req, res) => {
     // Send email if requested
     if (emailToReceiver && receiverEmail && emailMessage) {
       try {
-        const nodemailer = require("nodemailer");
-        const transporter = nodemailer.createTransport({
-          service: "gmail",
-          auth: {
-            user: process.env.EMAIL_USER,
-            pass: process.env.EMAIL_PASS,
-          },
-        });
+        // Use the mailer helper which supports multiple email services (Vercel, Gmail API, Resend, etc.)
+        const { sendMail } = require("../configs/mailer");
 
         // Get receiver name if available
         let receiverName = "there";
@@ -545,7 +539,7 @@ router.put("/:userId/:gameId/complete", checkFirebase, async (req, res) => {
         }
 
         const mailOptions = {
-          from: `"Dearly 💌" <${process.env.EMAIL_USER}>`,
+          from: `"Dearly 💌" <${process.env.EMAIL_USER || process.env.EMAIL_FROM || 'noreply@dearly.app'}>`,
           to: receiverEmail,
           subject: `Your reward "${rewardName}" has been fulfilled! 🎁`,
           html: `
@@ -619,7 +613,7 @@ router.put("/:userId/:gameId/complete", checkFirebase, async (req, res) => {
           `,
         };
 
-        await transporter.sendMail(mailOptions);
+        await sendMail(mailOptions);
         console.log(`✅ Fulfillment email sent to ${receiverEmail} for game ${gameId}`);
       } catch (emailError) {
         console.error("❌ Error sending fulfillment email:", emailError);
