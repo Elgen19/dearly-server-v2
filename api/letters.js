@@ -54,6 +54,22 @@ const tokenRegenerationLimiter = rateLimit({
   legacyHeaders: false,
 });
 
+// Rate limiting for security answer validation (romantic approach)
+const securityAnswerLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 5, // 5 attempts per 15 minutes per IP
+  handler: (req, res) => {
+    res.status(429).json({
+      success: false,
+      message: "Take a gentle breath, dear one. Too many attempts have been made. Please wait a moment and try again with patience and care. 💕",
+      hint: "The answer will come to you when you're ready."
+    });
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: true, // Don't count successful attempts
+});
+
 // Middleware to check if Firebase is initialized
 const checkFirebase = (req, res, next) => {
   if (!db) {
@@ -203,18 +219,24 @@ router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) 
     
     if (!tokenData) {
       console.log('❌ Token not found in database:', token.substring(0, 8) + '...');
-      return res.status(404).json({ message: "Invalid or expired link" });
+      return res.status(404).json({ 
+        message: "This link seems to have wandered away. It may have been changed or the letter may have been moved. Please check with the sender for a new link. 💔"
+      });
     }
     
     // Check if token is active
     if (tokenData.isActive === false) {
       console.log('❌ Token is inactive (revoked):', token.substring(0, 8) + '...');
-      return res.status(410).json({ message: "Link has been revoked. The letter owner may have regenerated the link." });
+      return res.status(410).json({ 
+        message: "This link has been updated by the sender. Please ask them for the new link to access your letter. The old link is no longer valid. 💌"
+      });
     }
     
     // Check expiration
     if (tokenData.expiresAt && new Date(tokenData.expiresAt) < new Date()) {
-      return res.status(410).json({ message: "Link has expired" });
+      return res.status(410).json({ 
+        message: "This link has reached the end of its journey. Please ask the sender for a new link to access your letter. 💕"
+      });
     }
     
     // Auto-renewal: If token expires within 30 days, extend it by 1 year
@@ -253,17 +275,30 @@ router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) 
     if (!letter) {
       console.log('❌ Letter not found in database:', { userId, letterId });
       return res.status(404).json({ 
-        message: "Letter not found",
-        hint: "The letter may have been deleted or the token may be invalid"
+        message: "This letter seems to have been moved or removed. It may have been deleted by the sender. Please check with them. 💔"
       });
     }
     
     console.log('✅ Letter found:', { userId, letterId, hasSecurity: !!letter.securityType });
     
+    // Track token usage (first access, last access, access count)
+    const now = new Date().toISOString();
+    const tokenUpdateData = {
+      lastAccessedAt: now,
+      accessCount: (tokenData.accessCount || 0) + 1
+    };
+    
+    // Track first access if this is the first time
+    if (!tokenData.firstAccessedAt) {
+      tokenUpdateData.firstAccessedAt = now;
+    }
+    
+    await tokenRef.update(tokenUpdateData);
+    
     // Log access (optional - for analytics)
     const accessLogRef = db.ref(`letterTokens/${token}/accessLog`).push();
     await accessLogRef.set({
-      accessedAt: new Date().toISOString(),
+      accessedAt: now,
       ip: req.ip || req.connection.remoteAddress
     });
     
@@ -309,7 +344,10 @@ router.get("/:userId/:letterId", checkFirebase, async (req, res, next) => {
 
 // POST /api/letters/:userId/:letterId/validate-security - Validate security answer
 // Moved here before POST /:userId to prevent route conflicts
-router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, res) => {
+router.post("/:userId/:letterId/validate-security", 
+  securityAnswerLimiter, // ✅ Rate limiting with romantic messages
+  checkFirebase, 
+  async (req, res) => {
   console.log('🔐 validate-security endpoint hit:', { userId: req.params.userId, letterId: req.params.letterId });
   console.log('🔐 Request body:', req.body);
   try {
@@ -322,7 +360,7 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
       console.log('❌ No answer provided');
       return res.status(400).json({ 
         success: false,
-        message: "Answer is required" 
+        message: "Please share your answer, dear one. The letter is waiting for you. 💌"
       });
     }
 
@@ -338,7 +376,7 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
       console.log('❌ Letter not found in database');
       return res.status(404).json({ 
         success: false,
-        message: "Letter not found" 
+        message: "This letter seems to have wandered away. It may have been moved or the link may have changed. 💔"
       });
     }
 
@@ -346,7 +384,7 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
     if (!letter.securityType || !letter.securityConfig) {
       return res.status(400).json({ 
         success: false,
-        message: "Letter does not have security configured" 
+        message: "This letter doesn't require a special answer. It's ready for you to read. 💌"
       });
     }
 
@@ -362,7 +400,7 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
       if (!storedHash) {
         return res.status(500).json({ 
           success: false,
-          message: "Security configuration error: hash not found" 
+          message: "Something unexpected happened while preparing your letter. Please try again in a moment. 🌙"
         });
       }
 
@@ -376,7 +414,7 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
       if (!storedHash) {
         return res.status(500).json({ 
           success: false,
-          message: "Security configuration error: hash not found" 
+          message: "Something unexpected happened while preparing your letter. Please try again in a moment. 🌙"
         });
       }
 
@@ -384,7 +422,7 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
     } else {
       return res.status(400).json({ 
         success: false,
-        message: "Unknown security type" 
+        message: "This letter has a special way of being unlocked. Please check the link and try again. ✨"
       });
     }
 
@@ -427,7 +465,9 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
     const response = { 
       success: true,
       isCorrect: isCorrect,
-      message: isCorrect ? "Answer is correct" : "Answer is incorrect"
+      message: isCorrect 
+        ? "Perfect! Your answer opens the way. The letter awaits you with open arms. 💌✨" 
+        : "That's not quite the answer this letter is looking for. Take your time, breathe, and try again with care. The right answer will come to you. 💕"
     };
     console.log('🔐 Sending response:', response);
     res.status(200).json(response);
@@ -437,8 +477,7 @@ router.post("/:userId/:letterId/validate-security", checkFirebase, async (req, r
     console.error("❌ Error stack:", error.stack);
     res.status(500).json({ 
       success: false,
-      message: "Error validating answer", 
-      error: error.message 
+      message: "Something unexpected happened while checking your answer. Please take a moment and try again. The letter will wait for you. 🌙"
     });
   }
 });

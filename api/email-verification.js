@@ -5,24 +5,91 @@ const crypto = require("crypto");
 const { admin, db } = require("../configs/firebase");
 require('dotenv').config();
 
-// In-memory store for verification tokens (in production, use a database)
-// Format: { token: { email, firstName, lastName, createdAt, expiresAt } }
-const verificationTokens = new Map();
-
 // Generate a secure random token
 const generateToken = () => {
   return crypto.randomBytes(32).toString('hex');
 };
 
-// Clean up expired tokens (run every hour)
-setInterval(() => {
-  const now = Date.now();
-  for (const [token, data] of verificationTokens.entries()) {
-    if (data.expiresAt < now) {
-      verificationTokens.delete(token);
-    }
+// Helper function to get token data from Firebase
+const getTokenData = async (token) => {
+  if (!db) return null;
+  try {
+    const tokenRef = db.ref(`emailVerificationTokens/${token}`);
+    const snapshot = await tokenRef.once('value');
+    return snapshot.val();
+  } catch (error) {
+    console.error('Error fetching token from Firebase:', error);
+    return null;
   }
-}, 60 * 60 * 1000); // Every hour
+};
+
+// Helper function to save token to Firebase
+const saveToken = async (token, tokenData) => {
+  if (!db) return false;
+  try {
+    const tokenRef = db.ref(`emailVerificationTokens/${token}`);
+    await tokenRef.set({
+      ...tokenData,
+      expiresAt: tokenData.expiresAt, // Store as timestamp
+    });
+    return true;
+  } catch (error) {
+    console.error('Error saving token to Firebase:', error);
+    return false;
+  }
+};
+
+// Helper function to update token in Firebase
+const updateToken = async (token, updates) => {
+  if (!db) return false;
+  try {
+    const tokenRef = db.ref(`emailVerificationTokens/${token}`);
+    await tokenRef.update(updates);
+    return true;
+  } catch (error) {
+    console.error('Error updating token in Firebase:', error);
+    return false;
+  }
+};
+
+// Helper function to delete token from Firebase
+const deleteToken = async (token) => {
+  if (!db) return false;
+  try {
+    const tokenRef = db.ref(`emailVerificationTokens/${token}`);
+    await tokenRef.remove();
+    return true;
+  } catch (error) {
+    console.error('Error deleting token from Firebase:', error);
+    return false;
+  }
+};
+
+// Clean up expired tokens (run every hour)
+if (db) {
+  setInterval(async () => {
+    try {
+      const now = Date.now();
+      const tokensRef = db.ref('emailVerificationTokens');
+      const snapshot = await tokensRef.once('value');
+      const tokens = snapshot.val() || {};
+      
+      const deletePromises = [];
+      for (const [token, data] of Object.entries(tokens)) {
+        if (data && data.expiresAt && data.expiresAt < now) {
+          deletePromises.push(deleteToken(token));
+        }
+      }
+      
+      if (deletePromises.length > 0) {
+        await Promise.all(deletePromises);
+        console.log(`🧹 Cleaned up ${deletePromises.length} expired email verification tokens`);
+      }
+    } catch (error) {
+      console.error('Error cleaning up expired tokens:', error);
+    }
+  }, 60 * 60 * 1000); // Every hour
+}
 
 // POST /api/email-verification/send
 // Send verification email
@@ -59,8 +126,8 @@ router.post("/send", async (req, res) => {
     const token = generateToken();
     const expiresAt = Date.now() + 24 * 60 * 60 * 1000; // 24 hours
 
-    // Store token with userId mapping for idempotent verification
-    verificationTokens.set(token, {
+    // Store token in Firebase for persistence
+    const tokenData = {
       email,
       firstName,
       lastName,
@@ -68,13 +135,22 @@ router.post("/send", async (req, res) => {
       createdAt: Date.now(),
       expiresAt,
       used: false // Track if token has been used
-    });
+    };
+    
+    const saved = await saveToken(token, tokenData);
+    if (!saved) {
+      console.warn('⚠️ Failed to save token to Firebase, but continuing...');
+    }
     
     // Also store a reverse mapping: userId -> token (for idempotent checks)
-    if (!verificationTokens.userIdMap) {
-      verificationTokens.userIdMap = new Map();
+    if (db) {
+      try {
+        const userIdMapRef = db.ref(`emailVerificationUserIdMap/${userId}`);
+        await userIdMapRef.set({ token, createdAt: Date.now() });
+      } catch (error) {
+        console.warn('⚠️ Failed to save userId mapping:', error);
+      }
     }
-    verificationTokens.userIdMap.set(userId, token);
 
     // Create email transporter
     const transporter = nodemailer.createTransport({
@@ -170,7 +246,6 @@ router.get("/verify", async (req, res) => {
     const { token } = req.query;
 
     console.log('Verification request received. Token:', token ? `${token.substring(0, 10)}...` : 'missing');
-    console.log('Total tokens in memory:', verificationTokens.size);
 
     if (!token) {
       console.error('No token provided in request');
@@ -189,22 +264,21 @@ router.get("/verify", async (req, res) => {
       decodedToken = token;
     }
     
-    // Check if token exists (try both encoded and decoded versions)
-    let tokenData = verificationTokens.get(decodedToken);
+    // Check if token exists in Firebase (try both encoded and decoded versions)
+    let tokenData = await getTokenData(decodedToken);
     if (!tokenData) {
-      tokenData = verificationTokens.get(token);
+      tokenData = await getTokenData(token);
     }
 
     // If token not found, return error (can't check user without userId from token)
     if (!tokenData) {
-      console.error('Token not found in memory.');
+      console.error('Token not found in database.');
       console.error('Received token (first 20 chars):', token.substring(0, 20));
       console.error('Decoded token (first 20 chars):', decodedToken.substring(0, 20));
-      console.error('Total tokens in store:', verificationTokens.size);
       
       return res.status(400).json({ 
         success: false, 
-        error: "Invalid or expired verification token. The token may have expired, already been used, or the server may have restarted. If you've already verified your email, you can try signing in. Otherwise, please request a new verification email." 
+        error: "This verification link is no longer valid. It may have expired or already been used. If you've already verified your email, you can sign in. Otherwise, please request a new verification email. 💌"
       });
     }
     
@@ -242,13 +316,14 @@ router.get("/verify", async (req, res) => {
 
     // Check if token has expired
     if (Date.now() > tokenData.expiresAt) {
-      verificationTokens.delete(decodedToken);
+      // Clean up expired token
+      await deleteToken(decodedToken);
       if (decodedToken !== token) {
-        verificationTokens.delete(token);
+        await deleteToken(token);
       }
       return res.status(400).json({ 
         success: false, 
-        error: "Verification token has expired" 
+        error: "This verification link has expired. Please request a new verification email to continue. The link is valid for 24 hours. 💌"
       });
     }
 
@@ -288,13 +363,9 @@ router.get("/verify", async (req, res) => {
     }
 
     // Mark token as used instead of deleting (allows idempotent verification)
-    // Use the token that was actually found in the map
-    const tokenToMark = tokenData === verificationTokens.get(decodedToken) ? decodedToken : token;
-    if (verificationTokens.has(tokenToMark)) {
-      verificationTokens.get(tokenToMark).used = true;
-    }
-    if (decodedToken !== token && verificationTokens.has(token)) {
-      verificationTokens.get(token).used = true;
+    await updateToken(decodedToken, { used: true, usedAt: Date.now() });
+    if (decodedToken !== token) {
+      await updateToken(token, { used: true, usedAt: Date.now() });
     }
     console.log('Token marked as used after successful verification');
 
