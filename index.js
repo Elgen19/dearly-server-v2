@@ -38,7 +38,16 @@ if (NODE_ENV === 'production') {
 app.use(helmet({
   contentSecurityPolicy: NODE_ENV === 'production' ? undefined : false, // Disable in dev for easier debugging
   crossOriginEmbedderPolicy: false, // Allow embedding if needed
-  crossOriginOpenerPolicy: false // Allow popups for Firebase Auth (client already sets unsafe-none)
+  crossOriginOpenerPolicy: false, // Allow popups for Firebase Auth (client already sets unsafe-none)
+  hsts: {
+    maxAge: 31536000, // 1 year
+    includeSubDomains: true,
+    preload: true
+  },
+  frameguard: { action: 'deny' }, // Prevent clickjacking
+  noSniff: true, // Prevent MIME type sniffing
+  xssFilter: true, // Enable XSS filter
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' }
 }));
 
 // Security: Configure CORS - restrict to production domain in production
@@ -113,7 +122,9 @@ app.use((req, res, next) => {
   next();
 });
 
-app.use(express.json()); // Express 5.x has built-in JSON parsing
+// Security: Limit request body size to prevent DoS attacks
+app.use(express.json({ limit: '10mb' })); // Limit JSON payload to 10MB
+app.use(express.urlencoded({ extended: true, limit: '10mb' })); // Limit URL-encoded payload
 
 // Serve uploaded music files as static files
 // Files will be accessible at: http://your-server:5000/uploads/music/filename

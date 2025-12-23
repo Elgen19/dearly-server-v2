@@ -5,6 +5,8 @@ const crypto = require("crypto");
 const rateLimit = require("express-rate-limit");
 const { db, storage } = require("../configs/firebase");
 const { verifyAuth, verifyOwnership } = require("../middleware/auth");
+const { sanitizeBody, validateTokenParam, validateUserIdParam, validateLetterIdParam, anonymizeIP } = require("../middleware/validation");
+const { logTokenAccess, logSecurityValidation, logRateLimitViolation } = require("../middleware/audit");
 
 // Security: Only log requests in development mode
 if (process.env.NODE_ENV === 'development') {
@@ -58,7 +60,9 @@ const tokenRegenerationLimiter = rateLimit({
 const securityAnswerLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: 5, // 5 attempts per 15 minutes per IP
-  handler: (req, res) => {
+  handler: async (req, res) => {
+    // Log rate limit violation
+    await logRateLimitViolation(req, 'security_validation');
     res.status(429).json({
       success: false,
       message: "Take a gentle breath, dear one. Too many attempts have been made. Please wait a moment and try again with patience and care. 💕",
@@ -208,7 +212,11 @@ router.get("/:userId", checkFirebase, async (req, res, next) => {
 });
 
 // GET /api/letters/token/:token - Fetch a letter by secure token (RECOMMENDED)
-router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) => {
+router.get("/token/:token", 
+  tokenAccessLimiter, 
+  validateTokenParam, // ✅ Validate token format
+  checkFirebase, 
+  async (req, res) => {
   try {
     const { token } = req.params;
     
@@ -219,6 +227,7 @@ router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) 
     
     if (!tokenData) {
       console.log('❌ Token not found in database:', token.substring(0, 8) + '...');
+      await logTokenAccess(req, token, false, 'token_not_found');
       return res.status(404).json({ 
         message: "This link seems to have wandered away. It may have been changed or the letter may have been moved. Please check with the sender for a new link. 💔"
       });
@@ -227,6 +236,7 @@ router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) 
     // Check if token is active
     if (tokenData.isActive === false) {
       console.log('❌ Token is inactive (revoked):', token.substring(0, 8) + '...');
+      await logTokenAccess(req, token, false, 'token_revoked');
       return res.status(410).json({ 
         message: "This link has been updated by the sender. Please ask them for the new link to access your letter. The old link is no longer valid. 💌"
       });
@@ -234,6 +244,7 @@ router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) 
     
     // Check expiration
     if (tokenData.expiresAt && new Date(tokenData.expiresAt) < new Date()) {
+      await logTokenAccess(req, token, false, 'token_expired');
       return res.status(410).json({ 
         message: "This link has reached the end of its journey. Please ask the sender for a new link to access your letter. 💕"
       });
@@ -295,12 +306,15 @@ router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) 
     
     await tokenRef.update(tokenUpdateData);
     
-    // Log access (optional - for analytics)
+    // Log access (optional - for analytics) - with anonymized IP
     const accessLogRef = db.ref(`letterTokens/${token}/accessLog`).push();
     await accessLogRef.set({
       accessedAt: now,
-      ip: req.ip || req.connection.remoteAddress
+      ip: anonymizeIP(req.ip || req.connection.remoteAddress) // ✅ Anonymize IP
     });
+    
+    // Log successful token access
+    await logTokenAccess(req, token, true);
     
     // Return letter data (without sensitive token info)
     // IMPORTANT: userId must come AFTER spreading letter to ensure it's not overwritten
@@ -314,9 +328,13 @@ router.get("/token/:token", tokenAccessLimiter, checkFirebase, async (req, res) 
     });
   } catch (error) {
     console.error("Error fetching letter by token:", error);
+    // Don't expose internal error details in production
+    const errorMessage = process.env.NODE_ENV === 'development' 
+      ? error.message 
+      : "Something unexpected happened while loading your letter. Please try again in a moment. 🌙";
     res.status(500).json({ 
-      message: "Error fetching letter", 
-      error: error.message 
+      message: "Something unexpected happened while loading your letter. Please try again in a moment. 🌙",
+      ...(process.env.NODE_ENV === 'development' && { error: error.message })
     });
   }
 });
@@ -345,6 +363,9 @@ router.get("/:userId/:letterId", checkFirebase, async (req, res, next) => {
 // POST /api/letters/:userId/:letterId/validate-security - Validate security answer
 // Moved here before POST /:userId to prevent route conflicts
 router.post("/:userId/:letterId/validate-security", 
+  sanitizeBody, // ✅ Sanitize input
+  validateUserIdParam, // ✅ Validate userId format
+  validateLetterIdParam, // ✅ Validate letterId format
   securityAnswerLimiter, // ✅ Rate limiting with romantic messages
   checkFirebase, 
   async (req, res) => {
@@ -428,6 +449,9 @@ router.post("/:userId/:letterId/validate-security",
 
     console.log('🔐 Validation result:', { isCorrect, securityType });
     
+    // Log security validation attempt
+    await logSecurityValidation(req, letterId, isCorrect, isCorrect ? 'success' : 'incorrect_answer');
+    
     // If answer is correct, update letter status to "read" and create notification
     if (isCorrect) {
       try {
@@ -485,6 +509,9 @@ router.post("/:userId/:letterId/validate-security",
 // POST /api/letters/:userId/:letterId/regenerate-token - Regenerate token for an existing letter
 // Moved here before POST /:userId to prevent route conflicts
 router.post("/:userId/:letterId/regenerate-token", 
+  sanitizeBody, // ✅ Sanitize input
+  validateUserIdParam, // ✅ Validate userId format
+  validateLetterIdParam, // ✅ Validate letterId format
   tokenRegenerationLimiter, // ✅ Rate limiting
   verifyAuth,               // ✅ Verify user is authenticated
   verifyOwnership,          // ✅ Verify user owns the letter
@@ -893,7 +920,13 @@ router.post("/:userId/:letterId/responses", checkFirebase, async (req, res) => {
 
 // POST /api/letters/:userId - Create a new letter
 // NOTE: This route must come AFTER all specific routes like /validate-security, /regenerate-token, etc.
-router.post("/:userId", checkFirebase, async (req, res) => {
+router.post("/:userId", 
+  sanitizeBody, // ✅ Sanitize input
+  validateUserIdParam, // ✅ Validate userId format
+  verifyAuth, 
+  verifyOwnership, 
+  checkFirebase, 
+  async (req, res) => {
   // Debug: Log if this route is being hit when it shouldn't be
   if (req.path.includes('validate-security') || req.path.includes('regenerate-token') || req.path.includes('responses')) {
     console.error('⚠️ WARNING: POST /:userId route matched when it should not have! Path:', req.path);
