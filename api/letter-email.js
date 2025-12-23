@@ -175,7 +175,11 @@ If you didn't expect this email, you can safely ignore it.`;
           mailOptions: mailOptions, // Store the full mail options for sending later
         });
 
-        console.log(`📅 Letter email scheduled for: ${recipientEmail} at ${scheduledDateTime} (ID: ${scheduledEmailId})`);
+        // Security: Anonymize email in production logs
+        const logEmail = process.env.NODE_ENV === 'development' 
+          ? recipientEmail 
+          : `${recipientEmail.split('@')[0]}@***`;
+        console.log(`📅 Letter email scheduled for: ${logEmail} at ${scheduledDateTime} (ID: ${scheduledEmailId})`);
         
         res.status(200).json({
           success: true,
@@ -193,7 +197,11 @@ If you didn't expect this email, you can safely ignore it.`;
       }
     } else {
       // Send email immediately with retry logic
-      console.log(`📧 Sending letter email to: ${recipientEmail}`);
+      // Security: Anonymize email in production logs
+      const logEmail = process.env.NODE_ENV === 'development' 
+        ? recipientEmail 
+        : `${recipientEmail.split('@')[0]}@***`;
+      console.log(`📧 Sending letter email to: ${logEmail}`);
       
       let lastError;
       const maxRetries = 2;
@@ -208,7 +216,11 @@ If you didn't expect this email, you can safely ignore it.`;
           
           await Promise.race([sendPromise, timeoutPromise]);
           
-          console.log(`✅ Letter email sent successfully to: ${recipientEmail}`);
+          // Security: Anonymize email in production logs
+          const logEmail = process.env.NODE_ENV === 'development' 
+            ? recipientEmail 
+            : `${recipientEmail.split('@')[0]}@***`;
+          console.log(`✅ Letter email sent successfully to: ${logEmail}`);
 
           return res.status(200).json({
             success: true,

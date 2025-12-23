@@ -18,7 +18,11 @@ async function sendScheduledEmail(emailData, emailId) {
       return false;
     }
 
-    console.log(`📧 Sending scheduled email to: ${emailData.recipientEmail} (ID: ${emailId})`);
+    // Security: Anonymize email in production logs
+    const logEmail = process.env.NODE_ENV === 'development' 
+      ? emailData.recipientEmail 
+      : `${emailData.recipientEmail.split('@')[0]}@***`;
+    console.log(`📧 Sending scheduled email to: ${logEmail} (ID: ${emailId})`);
     console.log(`   Scheduled for: ${emailData.scheduledDateTime}, Current time: ${now.toISOString()}`);
     
     // Update status to 'sending'
@@ -30,7 +34,11 @@ async function sendScheduledEmail(emailData, emailId) {
     // Send the email using stored mailOptions (Resend API or SMTP)
     await sendMail(emailData.mailOptions);
 
-    console.log(`✅ Scheduled email sent successfully to: ${emailData.recipientEmail} (ID: ${emailId})`);
+    // Security: Anonymize email in production logs
+    const logEmail = process.env.NODE_ENV === 'development' 
+      ? emailData.recipientEmail 
+      : `${emailData.recipientEmail.split('@')[0]}@***`;
+    console.log(`✅ Scheduled email sent successfully to: ${logEmail} (ID: ${emailId})`);
 
     // Delete the email from scheduledEmails node after successful send
     if (db) {

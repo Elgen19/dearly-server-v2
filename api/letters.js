@@ -370,12 +370,16 @@ router.post("/:userId/:letterId/validate-security",
   checkFirebase, 
   async (req, res) => {
   console.log('🔐 validate-security endpoint hit:', { userId: req.params.userId, letterId: req.params.letterId });
-  console.log('🔐 Request body:', req.body);
+  // Security: Don't log request body in production (may contain sensitive answer)
+  if (process.env.NODE_ENV === 'development') {
+    console.log('🔐 Request body:', { ...req.body, answer: req.body.answer ? '[REDACTED]' : undefined });
+  }
   try {
     const { userId, letterId } = req.params;
     const { answer } = req.body; // User's submitted answer
 
-    console.log('🔐 Processing validation:', { userId, letterId, hasAnswer: !!answer, answer });
+    // Security: Never log the actual answer
+    console.log('🔐 Processing validation:', { userId, letterId, hasAnswer: !!answer });
 
     if (!answer) {
       console.log('❌ No answer provided');
@@ -493,7 +497,12 @@ router.post("/:userId/:letterId/validate-security",
         ? "Perfect! Your answer opens the way. The letter awaits you with open arms. 💌✨" 
         : "That's not quite the answer this letter is looking for. Take your time, breathe, and try again with care. The right answer will come to you. 💕"
     };
-    console.log('🔐 Sending response:', response);
+    // Security: Don't log response with isCorrect in production
+    if (process.env.NODE_ENV === 'development') {
+      console.log('🔐 Sending response:', response);
+    } else {
+      console.log('🔐 Sending response:', { success: response.success, isCorrect: '[REDACTED]' });
+    }
     res.status(200).json(response);
     console.log('✅ Response sent successfully');
   } catch (error) {
@@ -1149,7 +1158,20 @@ router.post("/:userId",
     const letterId = newLetterRef.key;
     
     console.log('💾 About to save letter with ID:', letterId);
-    console.log('💾 newLetter object before save:', JSON.stringify(newLetter, null, 2));
+    // Security: Only log full letter object in development (contains personal content)
+    if (process.env.NODE_ENV === 'development') {
+      console.log('💾 newLetter object before save:', JSON.stringify(newLetter, null, 2));
+    } else {
+      // In production, only log metadata
+      console.log('💾 newLetter metadata:', {
+        letterId,
+        hasIntroductory: !!newLetter.introductory,
+        hasMainBody: !!newLetter.mainBody,
+        hasClosing: !!newLetter.closing,
+        hasSecurity: !!newLetter.securityType,
+        receiverEmail: newLetter.receiverEmail ? `${newLetter.receiverEmail.split('@')[0]}@***` : undefined
+      });
+    }
     
     await newLetterRef.set(newLetter);
 
@@ -1197,7 +1219,19 @@ router.post("/:userId",
         hasClosingStyle: 'closingStyle' in savedData,
         closingStyle: savedData.closingStyle
       });
-      console.log('✅ Full saved letter data:', JSON.stringify(savedData, null, 2));
+      // Security: Only log full letter data in development
+      if (process.env.NODE_ENV === 'development') {
+        console.log('✅ Full saved letter data:', JSON.stringify(savedData, null, 2));
+      } else {
+        // In production, only log metadata
+        console.log('✅ Letter saved successfully:', {
+          letterId: savedData.id || letterId,
+          hasIntroductory: !!savedData.introductory,
+          hasMainBody: !!savedData.mainBody,
+          hasClosing: !!savedData.closing,
+          hasSecurity: !!savedData.securityType
+        });
+      }
       
       // Also query the parent node to see all letters
       const allLettersSnapshot = await lettersRef.once("value");

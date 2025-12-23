@@ -614,7 +614,11 @@ router.put("/:userId/:gameId/complete", checkFirebase, async (req, res) => {
         };
 
         await sendMail(mailOptions);
-        console.log(`✅ Fulfillment email sent to ${receiverEmail} for game ${gameId}`);
+        // Security: Anonymize email in production logs
+        const logEmail = process.env.NODE_ENV === 'development' 
+          ? receiverEmail 
+          : `${receiverEmail.split('@')[0]}@***`;
+        console.log(`✅ Fulfillment email sent to ${logEmail} for game ${gameId}`);
       } catch (emailError) {
         console.error("❌ Error sending fulfillment email:", emailError);
         // Don't fail the request if email fails - still update the status

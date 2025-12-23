@@ -169,11 +169,15 @@ router.post("/send", async (req, res) => {
     }
     const verificationLink = `${CLIENT_URL}/verify-email?token=${encodedToken}`;
     
-    // Security: Only log in development
+    // Security: Only log in development, and anonymize email
     if (process.env.NODE_ENV === 'development') {
       console.log('Verification email being sent to:', email);
       console.log('Token generated (first 10 chars):', token.substring(0, 10) + '...');
       console.log('Verification link:', verificationLink);
+    } else {
+      // In production, only log anonymized email
+      const anonymizedEmail = email ? `${email.split('@')[0]}@***` : 'unknown';
+      console.log('Verification email being sent to:', anonymizedEmail);
     }
 
     // Email content

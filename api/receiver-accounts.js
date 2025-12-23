@@ -28,7 +28,9 @@ router.post("/link", checkFirebase, async (req, res) => {
       });
     }
 
-    console.log('🔗 Linking receiver account:', { receiverEmail, letterId, senderUserId });
+    // Security: Anonymize email in logs
+    const anonymizedEmail = receiverEmail ? `${receiverEmail.split('@')[0]}@***` : 'unknown';
+    console.log('🔗 Linking receiver account:', { receiverEmail: anonymizedEmail, letterId, senderUserId });
 
     // Find user by email in Firebase Auth (we need to query users to find matching email)
     // Since we can't directly query Firebase Auth by email from backend easily,
